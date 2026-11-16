@@ -1,0 +1,4 @@
+interface:
+  display_name: "らくに多言語対応"
+  short_description: "正本を1つの意味キー＋ICUカタログに絞り、LLMの差分翻訳とプラットフォーム標準ランタイムで、最もらくに効果的に多言語対応する"
+  default_prompt: "$easy_i18n を使って進めて。"
