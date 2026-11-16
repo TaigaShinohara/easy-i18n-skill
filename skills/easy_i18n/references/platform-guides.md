@@ -30,15 +30,27 @@
 
 - 変数は位置指定のプレースホルダで受ける。例は `%1$s` と `%1$d` である。文の連結は Lint でも警告されるため行わない。
 
-- アプリ別言語設定を使う。新しいビルド設定ではロケール一覧が自動生成される。古い構成では `locales_config.xml` を用意し、`AppCompatDelegate.setApplicationLocales()` で切り替える。
+- アプリ別言語設定を使う。AGP 8.1 以降ではビルド設定でロケール設定の自動生成を有効にすると `LocaleConfig` が作られる。古い構成では `locales_config.xml` を用意し、`AppCompatDelegate.setApplicationLocales()` で切り替える。AppCompat 経由の場合は自動保存のサービス宣言が要る点も確認する。
+
+- 地域つきロケールのフォルダ名に注意する。たとえばブラジル向けポルトガル語は `values-pt-rBR` であり、`values-pt-BR` は誤りである。同梱の変換スクリプトはこの形で出す。
 
 - RTL が要る場合はマニフェストで RTL 対応を宣言し、余白は Start と End の論理方向で指定する。
 
 - 検証は Lint の MissingTranslation と HardcodedText を使う。擬似ロケールはビルド設定で有効化でき、アクセント付きと擬似 RTL が開発者向け設定に出る。
 
+## iOS と macOS
+
+- 置き場所はターゲット内の String Catalog である。拡張子は `.xcstrings` で、ソース言語を既定として全キーを入れ、ロケールごとに翻訳と複数形のバリエーションを足す。
+
+- プレースホルダは位置指定で受ける。iOS 側の形式は `%1$@` のような形であり、中央カタログの `{name}` とは表記が違うため、変換では対応表を必ず検証する。
+
+- 言語の切り替えは OS のアプリ別言語設定に従うのが既定である。アプリ内に独自の切り替えを作る場合は再起動や再描画の扱いを明示する。
+
 ## Chrome 拡張
 
-- 置き場所は `_locales/<locale>/messages.json` である。各キーは `message` と文脈用の `description` と必要なら `placeholders` を持つ。
+- 置き場所は `_locales/<locale>/messages.json` である。ロケール名はハイフンではなくアンダースコアで書く。たとえば `pt_BR` であり、対応ロケールは Chrome の定めた集合の中から選ぶ。各キーは `message` と文脈用の `description` と必要なら `placeholders` を持つ。
+
+- プレースホルダは `$NAME$` の形で書き、`placeholders` に中身の順番を定義する。中央カタログの `{name}` のままでは置換されない。同梱の変換スクリプトはこの形へ変換する。
 
 - マニフェストには `default_locale` を必ず入れる。`_locales` があるのに既定ロケールがないと読み込めない。
 

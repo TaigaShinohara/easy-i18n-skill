@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Validate locale catalogs against the source catalog.
 
-Checks, for every locale file in a messages directory:
+Checks, for the source catalog and every other locale file:
+  - no value is empty or whitespace only (source included)
+  - braces are balanced and ICU plural/select blocks contain `other`
   - the flattened key set matches the source exactly (missing / extra keys)
   - the placeholder set per key matches the source
-  - no value is empty or whitespace only
 
 Usage:
   python3 validate_locales.py [messages_dir] [--source en]
@@ -12,6 +13,8 @@ Usage:
 Exit code 0 when everything matches, 1 otherwise.
 Catalogs are JSON files named <locale>.json with nested objects whose
 leaves are strings. Keys are flattened with dots, e.g. cart.checkout_cta.
+Note: a key written both as a flat dotted key and as a nested object
+collides after flattening. Keep one style per catalog.
 """
 import argparse
 import json
@@ -21,6 +24,7 @@ from pathlib import Path
 
 PLACEHOLDER_RE = re.compile(r"\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*[,}]")
 PERCENT_RE = re.compile(r"%\d+\$[sdif]|%[sdif]")
+ICU_TYPE_RE = re.compile(r"\{\s*[A-Za-z_][A-Za-z0-9_]*\s*,\s*(plural|select|selectordinal)\s*,")
 
 
 def flatten(obj, prefix=""):
@@ -38,12 +42,42 @@ def flatten(obj, prefix=""):
 
 def placeholders(text):
     names = set(PLACEHOLDER_RE.findall(text))
-    # ICU keywords appear as {count, plural, ...} - the first name is the
-    # variable, which the regex already captures. Inner # is not a placeholder.
     names.discard("plural")
     names.discard("select")
     names.discard("selectordinal")
     return names, set(PERCENT_RE.findall(text))
+
+
+def icu_problems(text):
+    """Return a list of structural problems in one message string."""
+    problems = []
+    depth = 0
+    for ch in text:
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth < 0:
+                problems.append("unbalanced braces (extra closing brace)")
+                return problems
+    if depth != 0:
+        problems.append("unbalanced braces (missing closing brace)")
+    # Every plural/select block needs an `other` branch. This is a
+    # heuristic scan: it checks the text after each ICU header up to the
+    # end of the string, which is good enough to catch a dropped branch.
+    for match in ICU_TYPE_RE.finditer(text):
+        tail = text[match.end():]
+        if not re.search(r"\bother\s*\{", tail):
+            problems.append(f"ICU {match.group(1)} block has no 'other' branch")
+    return problems
+
+
+def check_own_values(locale, data, errors):
+    for key, value in data.items():
+        if not value.strip():
+            errors.append(f"{locale}: empty value {key}")
+        for problem in icu_problems(value):
+            errors.append(f"{locale}: {problem} in {key}")
 
 
 def main():
@@ -60,6 +94,8 @@ def main():
 
     source = flatten(json.loads(source_file.read_text(encoding="utf-8")))
     errors = []
+    check_own_values(args.source, source, errors)
+
     files = sorted(base.glob("*.json"))
     if len(files) < 2:
         print(f"WARN: only {len(files)} catalog file(s) found in {base}")
@@ -73,6 +109,7 @@ def main():
         except Exception as exc:  # noqa: BLE001
             errors.append(f"{locale}: invalid JSON ({exc})")
             continue
+        check_own_values(locale, data, errors)
         missing = sorted(set(source) - set(data))
         extra = sorted(set(data) - set(source))
         for key in missing:
@@ -92,8 +129,6 @@ def main():
                     f"{locale}: percent placeholder mismatch {key}: "
                     f"source {sorted(s_pct)} vs locale {sorted(t_pct)}"
                 )
-            if not data[key].strip():
-                errors.append(f"{locale}: empty value {key}")
 
     if errors:
         print(f"FAILED: {len(errors)} problem(s)")

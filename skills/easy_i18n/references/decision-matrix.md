@@ -16,7 +16,7 @@
 
 - Next.js の App Router の場合は next-intl を選ぶ。ICU が内蔵され、サーバーコンポーネントでそのまま使え、型の補完が標準で効く。Next.js 専用である点だけが制約である。
 
-- Vite と React の新規プロジェクトでは Paraglide JS を選ぶ。コンパイラが型安全なメッセージ関数を生成し、使った文だけがバンドルに入る。提供元や Provider が不要で配線が小さい。コミュニティは他の候補より小さい。
+- Vite と React の新規プロジェクトでは Paraglide JS を選ぶ。コンパイラが型安全なメッセージ関数を生成し、使った文だけがバンドルに入る。実行時の Provider が不要で配線が小さい。コミュニティは他の候補より小さい。
 
 - React Native や Electron とコードを共有する場合、または情報量とプラグインの多さを優先する場合は react-i18next を選ぶ。ICU はプラグインで足す。型安全は追加設定が要る。
 
@@ -33,6 +33,14 @@
 - Kotlin Multiplatform で UI まで共有する場合だけ Compose Multiplatform のリソースを選ぶ。置き場所が `commonMain/composeResources` に変わるだけで考え方は同じである。
 
 - 実行時の言語切り替えを標準より強くしたい場合やサーバー配信の文字列が要る場合だけサードパーティ製を検討する。その場合は Android Studio の翻訳エディタと Lint との互換を失う点を明記する。
+
+## iOS と macOS の選び方
+
+- ネイティブアプリでは String Catalogs を選ぶ。拡張子は `.xcstrings` で、Xcode がロケールごとの翻訳と複数形のバリエーションを1ファイルで管理する。
+
+- 中央カタログがある製品では、そこから生成するか書き出しで同期する。単体のアプリではカタログ自体を正本にし、中央 JSON を別に作らない。
+
+- 呼び出しは SwiftUI の文字列キー参照か `String(localized:)` を使う。古い `.strings` と `.stringsdict` の組み合わせは新規では選ばない。
 
 ## Chrome 拡張の選び方
 

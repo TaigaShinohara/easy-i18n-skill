@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
 """Convert central JSON catalogs to platform files.
 
-Supported targets:
-  android  -> <out>/<locale>/strings.xml style files are NOT written;
-              instead writes res layout: <out>/values/strings.xml for the
-              default locale and <out>/values-<locale>/strings.xml for
-              the rest. ICU plural strings are reported as warnings and
-              written as plain strings with a TODO comment, because
-              Android needs a hand-checked <plurals> entry.
-  chrome   -> <out>/<locale>/messages.json in chrome.i18n shape.
-              Dots in keys become underscores (Chrome message names).
+Targets:
+  android  Writes an Android res layout under the output directory:
+           values/strings.xml for the source locale and
+           values-<lang>[-r<REGION>]/strings.xml for the rest.
+           Literal %, apostrophes and double quotes are escaped for
+           aapt, {name} placeholders become %N$s, and a leading @ or ?
+           is escaped. ICU plural/select strings cannot be expressed
+           as a plain <string>, so they are reported as warnings and
+           written verbatim for a hand conversion to <plurals>.
+  chrome   Writes <out>/<locale_with_underscore>/messages.json in
+           chrome.i18n shape. {name} placeholders become $NAME$ with a
+           matching placeholders entry ($1, $2, ... in order of first
+           appearance). ICU plural/select strings are warned about,
+           because chrome.i18n has no plural support.
 
 Usage:
   python3 convert_catalog.py android messages/ android-res/
@@ -24,7 +29,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 ICU_COMPLEX_RE = re.compile(r"\{\s*[A-Za-z_][A-Za-z0-9_]*\s*,\s*(plural|select|selectordinal)\b")
-NAMED_RE = re.compile(r"\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:,[^}]*)?\}")
+NAMED_RE = re.compile(r"\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:,[^{}]*)?\}")
 
 
 def flatten(obj, prefix=""):
@@ -49,39 +54,57 @@ def load_catalogs(messages_dir, source):
 
 
 def android_name(key):
-    return key.replace(".", "_").replace("-", "_")
+    name = key.replace(".", "_").replace("-", "_").lower()
+    return re.sub(r"[^a-z0-9_]", "_", name)
+
+
+def android_folder(locale, source):
+    if locale == source:
+        return "values"
+    parts = locale.replace("_", "-").split("-")
+    if len(parts) >= 2 and len(parts[1]) in (2, 3):
+        return f"values-{parts[0]}-r{parts[1].upper()}"
+    return f"values-{parts[0]}"
+
+
+def escape_android_literal(text):
+    # Escape literal percent signs first: every % in the source is a
+    # literal, because placeholders arrive as {name} and are inserted
+    # after this step.
+    text = text.replace("%", "%%")
+    text = text.replace("'", "\\'")
+    text = text.replace('"', '\\"')
+    if text.startswith(("@", "?")):
+        text = "\\" + text
+    return text
 
 
 def to_android(text, key, warnings, locale):
-    # Order placeholders by first appearance and rewrite {name} to %N$s.
-    order = []
-    for match in NAMED_RE.finditer(text):
-        name = match.group(1)
-        # Skip the inner braces of ICU blocks; they are warned about below.
-        if name not in order:
-            order.append(name)
-
-    def repl(match):
-        name = match.group(1)
-        idx = order.index(name) + 1
-        return f"%{idx}$s"
-
-    converted = NAMED_RE.sub(repl, text)
     if ICU_COMPLEX_RE.search(text):
         warnings.append(
             f"{locale}: {key} uses ICU plural/select. "
-            "Written as a plain string - convert it to a <plurals> entry by hand."
+            "Written verbatim - convert it to a <plurals> entry by hand."
         )
-        # Strip the ICU wrapper crudely is unsafe; keep text visible for review.
-        converted = text
-    return converted
+        return text
+    order = []
+    for match in NAMED_RE.finditer(text):
+        name = match.group(1)
+        if name not in order:
+            order.append(name)
+    converted = escape_android_literal(text)
+
+    def repl(match):
+        name = match.group(1)
+        return f"%{order.index(name) + 1}$s"
+
+    return NAMED_RE.sub(repl, converted)
 
 
 def convert_android(catalogs, source, out_dir):
     warnings = []
     root_out = Path(out_dir)
     for locale, entries in catalogs.items():
-        folder = root_out / ("values" if locale == source else f"values-{locale}")
+        folder = root_out / android_folder(locale, source)
         folder.mkdir(parents=True, exist_ok=True)
         resources = ET.Element("resources")
         for key in sorted(entries):
@@ -94,22 +117,47 @@ def convert_android(catalogs, source, out_dir):
     return warnings
 
 
+def chrome_locale(locale):
+    return locale.replace("-", "_")
+
+
+def to_chrome(text, key, warnings, locale):
+    if ICU_COMPLEX_RE.search(text):
+        warnings.append(
+            f"{locale}: {key} uses ICU plural/select. "
+            "chrome.i18n has no plural support - split keys with Intl.PluralRules."
+        )
+        return {"message": text}
+    order = []
+    for match in NAMED_RE.finditer(text):
+        name = match.group(1)
+        if name not in order:
+            order.append(name)
+    if not order:
+        return {"message": text}
+
+    def repl(match):
+        return "$" + match.group(1).upper() + "$"
+
+    entry = {"message": NAMED_RE.sub(repl, text)}
+    entry["placeholders"] = {
+        name: {"content": f"${idx + 1}"} for idx, name in enumerate(order)
+    }
+    return entry
+
+
 def convert_chrome(catalogs, source, out_dir):
     warnings = []
     root_out = Path(out_dir)
     for locale, entries in catalogs.items():
-        folder = root_out / locale
+        folder = root_out / chrome_locale(locale)
         folder.mkdir(parents=True, exist_ok=True)
         messages = {}
         for key in sorted(entries):
-            chrome_key = key.replace(".", "_").replace("-", "_")
-            entry = {"message": entries[key]}
-            if ICU_COMPLEX_RE.search(entries[key]):
-                warnings.append(
-                    f"{locale}: {key} uses ICU plural/select. "
-                    "chrome.i18n has no plural support - split keys with Intl.PluralRules."
-                )
-            messages[chrome_key] = entry
+            chrome_key = re.sub(
+                r"[^A-Za-z0-9_]", "_", key.replace(".", "_")
+            )
+            messages[chrome_key] = to_chrome(entries[key], key, warnings, locale)
         (folder / "messages.json").write_text(
             json.dumps(messages, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
